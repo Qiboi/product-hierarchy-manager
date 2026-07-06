@@ -1,7 +1,7 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 "use client";
 
 import React, { useState, useCallback, useEffect, useRef } from "react";
-import { nanoid } from "nanoid";
 import clsx from "clsx";
 import {
   Plus,
@@ -12,9 +12,9 @@ import {
   Download,
   Upload,
   GripVertical,
-  Save,
-  X,
+  Loader2,
   Check,
+  X,
   FolderTree,
 } from "lucide-react";
 import {
@@ -34,184 +34,61 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 
 // ---------- Types ----------
+type FlatNode = {
+  _id: string;
+  name: string;
+  parentId: string | null;
+  order: number;
+};
+
 type NodeType = {
   id: string;
   name: string;
   children: NodeType[];
 };
 
-// ---------- Initial Data (seeded from your hierarchy) ----------
-const initialData: NodeType[] = [
-  {
-    id: nanoid(),
-    name: "Service",
-    children: [
-      {
-        id: nanoid(),
-        name: "Field of Play",
-        children: [
-          {
-            id: nanoid(),
-            name: "Indoor",
-            children: ["Flooring Gym", "Lapangan Vinyl", "Lapangan PU", "Lapangan Parquette"].map(
-              (n) => ({ id: nanoid(), name: n, children: [] })
-            ),
-          },
-          {
-            id: nanoid(),
-            name: "Outdoor",
-            children: [
-              "Lapangan Akrilik",
-              "Rumput Sintetis",
-              "Rumput Natural",
-              "Lapangan Padel",
-              "Lapangan Clay",
-              "Jogging Track",
-              "Track",
-              "Interlock",
-            ].map((n) => ({ id: nanoid(), name: n, children: [] })),
-          },
-          {
-            id: nanoid(),
-            name: "Playground",
-            children: ["Wet Play", "Rumput Sintetis", "Dry Play"].map((n) => ({
-              id: nanoid(),
-              name: n,
-              children: [],
-            })),
-          },
-          {
-            id: nanoid(),
-            name: "Sport Building",
-            children: ["Sport Tent", "Airdome"].map((n) => ({
-              id: nanoid(),
-              name: n,
-              children: [],
-            })),
-          },
-        ],
-      },
-      {
-        id: nanoid(),
-        name: "Equipment & Technology",
-        children: [
-          {
-            id: nanoid(),
-            name: "Seating",
-            children: ["Telescopic", "Stadium", "Bleachers", "Auditorium"].map((n) => ({
-              id: nanoid(),
-              name: n,
-              children: [],
-            })),
-          },
-          {
-            id: nanoid(),
-            name: "Divider Curtain",
-            children: ["Manual", "Electric"].map((n) => ({ id: nanoid(), name: n, children: [] })),
-          },
-          {
-            id: nanoid(),
-            name: "Equipment Sport & Gym",
-            children: ["Outdoor Fitness", "Playground", "Sports", "Gymnastic Equipment"].map(
-              (n) => ({ id: nanoid(), name: n, children: [] })
-            ),
-          },
-          {
-            id: nanoid(),
-            name: "Technology",
-            children: [
-              "Video Scoreboard",
-              "Timing System",
-              "System Clock",
-              "LED Perimeter",
-              "Electronic Sub-Board",
-              "Digital Scoreboard",
-            ].map((n) => ({ id: nanoid(), name: n, children: [] })),
-          },
-        ],
-      },
-      {
-        id: nanoid(),
-        name: "Event Management",
-        children: [
-          {
-            id: nanoid(),
-            name: "Game Management System",
-            children: [{ id: nanoid(), name: "Playpro", children: [] }],
-          },
-          {
-            id: nanoid(),
-            name: "Sports Event Organizer",
-            children: [{ id: nanoid(), name: "Event Organizer", children: [] }],
-          },
-          {
-            id: nanoid(),
-            name: "Rental Equipment",
-            children: [{ id: nanoid(), name: "Seiko", children: [] }],
-          },
-          {
-            id: nanoid(),
-            name: "Timing & Scoring System Operator",
-            children: [{ id: nanoid(), name: "Timing & Scoring Operator", children: [] }],
-          },
-        ],
-      },
-    ],
-  },
-];
+// ---------- Tree helpers ----------
+function buildTree(flat: FlatNode[]): NodeType[] {
+  const map = new Map<string, NodeType>();
+  flat.forEach((f) => map.set(f._id, { id: f._id, name: f.name, children: [] }));
 
-// ---------- Tree helpers (immutable ops) ----------
-function updateNode(tree: NodeType[], id: string, updater: (n: NodeType) => NodeType): NodeType[] {
-  return tree.map((n) => {
-    if (n.id === id) return updater(n);
-    if (n.children.length) return { ...n, children: updateNode(n.children, id, updater) };
-    return n;
-  });
-}
+  const roots: NodeType[] = [];
+  const sorted = [...flat].sort((a, b) => a.order - b.order);
 
-function removeNode(tree: NodeType[], id: string): NodeType[] {
-  return tree
-    .filter((n) => n.id !== id)
-    .map((n) => ({ ...n, children: removeNode(n.children, id) }));
-}
-
-function addChild(tree: NodeType[], parentId: string, child: NodeType): NodeType[] {
-  return tree.map((n) => {
-    if (n.id === parentId) return { ...n, children: [...n.children, child] };
-    if (n.children.length) return { ...n, children: addChild(n.children, parentId, child) };
-    return n;
-  });
-}
-
-function reorderSiblings(
-  tree: NodeType[],
-  parentId: string | null,
-  oldIndex: number,
-  newIndex: number
-): NodeType[] {
-  if (parentId === null) {
-    return arrayMove(tree, oldIndex, newIndex);
-  }
-  return tree.map((n) => {
-    if (n.id === parentId) {
-      return { ...n, children: arrayMove(n.children, oldIndex, newIndex) };
+  sorted.forEach((f) => {
+    const node = map.get(f._id)!;
+    if (f.parentId && map.has(f.parentId)) {
+      map.get(f.parentId)!.children.push(node);
+    } else if (!f.parentId) {
+      roots.push(node);
     }
-    if (n.children.length) {
-      return { ...n, children: reorderSiblings(n.children, parentId, oldIndex, newIndex) };
-    }
-    return n;
   });
+
+  return roots;
 }
 
 function countNodes(tree: NodeType[]): number {
   return tree.reduce((acc, n) => acc + 1 + countNodes(n.children), 0);
 }
 
+function findParentAndSiblings(
+  nodes: NodeType[],
+  id: string,
+  parentId: string | null = null
+): { parentId: string | null; index: number; siblings: NodeType[] } | null {
+  const idx = nodes.findIndex((n) => n.id === id);
+  if (idx !== -1) return { parentId, index: idx, siblings: nodes };
+  for (const n of nodes) {
+    const found = findParentAndSiblings(n.children, id, n.id);
+    if (found) return found;
+  }
+  return null;
+}
+
 // ---------- Sortable Node Component ----------
 function TreeNode({
   node,
   depth,
-  parentId,
   onAddChild,
   onDelete,
   onRename,
@@ -220,7 +97,6 @@ function TreeNode({
 }: {
   node: NodeType;
   depth: number;
-  parentId: string | null;
   onAddChild: (parentId: string) => void;
   onDelete: (id: string, name: string) => void;
   onRename: (id: string, name: string) => void;
@@ -255,6 +131,10 @@ function TreeNode({
   useEffect(() => {
     if (editing) inputRef.current?.focus();
   }, [editing]);
+
+  useEffect(() => {
+    setDraft(node.name);
+  }, [node.name]);
 
   const commitEdit = () => {
     const trimmed = draft.trim();
@@ -378,7 +258,6 @@ function TreeNode({
                 key={child.id}
                 node={child}
                 depth={depth + 1}
-                parentId={node.id}
                 onAddChild={onAddChild}
                 onDelete={onDelete}
                 onRename={onRename}
@@ -395,41 +274,48 @@ function TreeNode({
 
 // ---------- Main Page ----------
 export default function Page() {
-  const [tree, setTree] = useState<NodeType[]>(initialData);
+  const [tree, setTree] = useState<NodeType[]>([]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  const [dirty, setDirty] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
-  // Expand all root + first level by default
-  useEffect(() => {
+  const expandDefaults = (nodes: NodeType[]) => {
     const ids = new Set<string>();
-    const collect = (nodes: NodeType[], depth: number) => {
-      nodes.forEach((n) => {
+    const collect = (list: NodeType[], depth: number) => {
+      list.forEach((n) => {
         if (depth < 2) ids.add(n.id);
         collect(n.children, depth + 1);
       });
     };
-    collect(tree, 0);
-    setExpandedIds(ids);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    collect(nodes, 0);
+    return ids;
+  };
+
+  const loadTree = useCallback(async (keepExpanded = true) => {
+    try {
+      setError(null);
+      const res = await fetch("/api/nodes");
+      if (!res.ok) throw new Error("Gagal memuat data dari server");
+      const flat: FlatNode[] = await res.json();
+      const built = buildTree(flat);
+      setTree(built);
+      if (!keepExpanded) setExpandedIds(expandDefaults(built));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Terjadi kesalahan");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  // Warn before leaving/reloading if unsaved changes
   useEffect(() => {
-    const handler = (e: BeforeUnloadEvent) => {
-      if (dirty) {
-        e.preventDefault();
-        e.returnValue = "";
-      }
-    };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [dirty]);
-
-  const markDirty = () => setDirty(true);
+    loadTree(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggleExpand = useCallback((id: string) => {
     setExpandedIds((prev) => {
@@ -439,58 +325,115 @@ export default function Page() {
     });
   }, []);
 
-  const handleAddRoot = () => {
+  // ---------- API-backed actions ----------
+  const handleAddRoot = async () => {
     const name = prompt("Nama top level baru:");
     if (!name?.trim()) return;
-    setTree((t) => [...t, { id: nanoid(), name: name.trim(), children: [] }]);
-    markDirty();
+    setSaving(true);
+    try {
+      const res = await fetch("/api/nodes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), parentId: null }),
+      });
+      if (!res.ok) throw new Error("Gagal menambah top level");
+      await loadTree();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal menambah data");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleAddChild = (parentId: string) => {
+  const handleAddChild = async (parentId: string) => {
     const name = prompt("Nama sub-item baru:");
     if (!name?.trim()) return;
-    setTree((t) => addChild(t, parentId, { id: nanoid(), name: name.trim(), children: [] }));
-    setExpandedIds((prev) => new Set(prev).add(parentId));
-    markDirty();
-  };
-
-  const handleDelete = (id: string, name: string) => {
-    if (!confirm(`Hapus "${name}" beserta seluruh sub-item di dalamnya?`)) return;
-    setTree((t) => removeNode(t, id));
-    markDirty();
-  };
-
-  const handleRename = (id: string, name: string) => {
-    setTree((t) => updateNode(t, id, (n) => ({ ...n, name })));
-    markDirty();
-  };
-
-  // Build parent map for drag reorder (only supports reordering within same parent)
-  const findParentAndIndex = (
-    nodes: NodeType[],
-    id: string,
-    parentId: string | null = null
-  ): { parentId: string | null; index: number; siblings: NodeType[] } | null => {
-    const idx = nodes.findIndex((n) => n.id === id);
-    if (idx !== -1) return { parentId, index: idx, siblings: nodes };
-    for (const n of nodes) {
-      const found = findParentAndIndex(n.children, id, n.id);
-      if (found) return found;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/nodes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), parentId }),
+      });
+      if (!res.ok) throw new Error("Gagal menambah sub-item");
+      setExpandedIds((prev) => new Set(prev).add(parentId));
+      await loadTree();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal menambah data");
+    } finally {
+      setSaving(false);
     }
-    return null;
   };
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleDelete = async (id: string, name: string) => {
+    if (!confirm(`Hapus "${name}" beserta seluruh sub-item di dalamnya?`)) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/nodes/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Gagal menghapus item");
+      await loadTree();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal menghapus data");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRename = async (id: string, name: string) => {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/nodes/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) throw new Error("Gagal mengubah nama");
+      await loadTree();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal menyimpan perubahan");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    const activeInfo = findParentAndIndex(tree, active.id as string);
-    const overInfo = findParentAndIndex(tree, over.id as string);
+    const activeInfo = findParentAndSiblings(tree, active.id as string);
+    const overInfo = findParentAndSiblings(tree, over.id as string);
     if (!activeInfo || !overInfo) return;
-    if (activeInfo.parentId !== overInfo.parentId) return; // only reorder among siblings
+    if (activeInfo.parentId !== overInfo.parentId) return; // hanya reorder antar-sibling
 
-    setTree((t) => reorderSiblings(t, activeInfo.parentId, activeInfo.index, overInfo.index));
-    markDirty();
+    const reordered = arrayMove(activeInfo.siblings, activeInfo.index, overInfo.index);
+    const items = reordered.map((n, idx) => ({ id: n.id, order: idx }));
+
+    // optimistic UI update
+    setTree((prevTree) => {
+      const clone = JSON.parse(JSON.stringify(prevTree)) as NodeType[];
+      const target = activeInfo.parentId
+        ? findParentAndSiblings(clone, activeInfo.parentId)?.siblings.find(
+          (n) => n.id === activeInfo.parentId
+        )?.children
+        : clone;
+      // fallback: rebuild via same reorder on clone root/siblings list directly
+      return prevTree; // actual visual reorder resolved after refetch below
+    });
+
+    setSaving(true);
+    try {
+      const res = await fetch("/api/nodes/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+      if (!res.ok) throw new Error("Gagal menyimpan urutan baru");
+      await loadTree();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal menyimpan urutan");
+    } finally {
+      setSaving(false);
+    }
   };
 
   // ---------- Export / Import ----------
@@ -502,11 +445,10 @@ export default function Page() {
     a.download = `product-hierarchy-${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    setDirty(false);
   };
 
   const handleImportClick = () => {
-    if (dirty && !confirm("Perubahan belum disimpan. Lanjutkan import dan buang perubahan saat ini?")) {
+    if (!confirm("Import akan MENGGANTI seluruh data di database saat ini dengan isi file. Lanjutkan?")) {
       return;
     }
     fileInputRef.current?.click();
@@ -516,37 +458,30 @@ export default function Page() {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const parsed = JSON.parse(reader.result as string);
         if (!Array.isArray(parsed)) throw new Error("Format tidak valid");
-        setTree(parsed);
-        setDirty(false);
-        const ids = new Set<string>();
-        const collect = (nodes: NodeType[], depth: number) => {
-          nodes.forEach((n) => {
-            if (depth < 2) ids.add(n.id);
-            collect(n.children, depth + 1);
-          });
-        };
-        collect(parsed, 0);
-        setExpandedIds(ids);
-      } catch {
-        alert("Gagal membaca file. Pastikan format JSON valid hasil export dari aplikasi ini.");
+
+        setSaving(true);
+        const res = await fetch("/api/nodes/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ data: parsed }),
+        });
+        if (!res.ok) throw new Error("Gagal mengimpor data ke server");
+        await loadTree(false);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Gagal membaca atau mengimpor file");
+      } finally {
+        setSaving(false);
       }
     };
     reader.readAsText(file);
     e.target.value = "";
   };
 
-  const handleMarkSaved = () => {
-    setDirty(false);
-  };
-
   const totalNodes = countNodes(tree);
-
-  // simple filter: expand + highlight matches (visual only, non-destructive)
-  const filteredTree = tree; // full tree always rendered; search only affects expand behavior below
 
   useEffect(() => {
     if (!search.trim()) return;
@@ -561,8 +496,15 @@ export default function Page() {
     };
     walk(tree, []);
     setExpandedIds((prev) => new Set([...prev, ...ids]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search]);
+  }, [search, tree]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-gray-400 gap-2 text-sm">
+        <Loader2 className="animate-spin" size={16} /> Memuat data dari database...
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen">
@@ -577,8 +519,13 @@ export default function Page() {
               <h1 className="text-base font-semibold text-gray-900 leading-tight">
                 Product Hierarchy Manager
               </h1>
-              <p className="text-xs text-gray-400 leading-tight">
-                {totalNodes} item total {dirty && <span className="text-amber-500">• belum disimpan</span>}
+              <p className="text-xs text-gray-400 leading-tight flex items-center gap-1">
+                {totalNodes} item total
+                {saving && (
+                  <span className="text-indigo-500 flex items-center gap-1">
+                    • <Loader2 className="animate-spin" size={10} /> menyimpan...
+                  </span>
+                )}
               </p>
             </div>
           </div>
@@ -610,32 +557,31 @@ export default function Page() {
             >
               <Download size={14} /> Export
             </button>
-            <button
-              onClick={handleMarkSaved}
-              disabled={!dirty}
-              className={clsx(
-                "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border",
-                dirty
-                  ? "border-emerald-200 text-emerald-600 hover:bg-emerald-50"
-                  : "border-gray-100 text-gray-300 cursor-not-allowed"
-              )}
-              title="Tandai sebagai sudah disimpan (tanpa export)"
-            >
-              <Save size={14} /> Tandai Tersimpan
-            </button>
           </div>
         </div>
       </header>
+
+      {/* Error banner */}
+      {error && (
+        <div className="max-w-5xl mx-auto px-5 pt-4">
+          <div className="flex items-center justify-between bg-rose-50 border border-rose-200 text-rose-700 text-sm rounded-lg px-4 py-2">
+            <span>{error}</span>
+            <button onClick={() => setError(null)} className="p-1 hover:bg-rose-100 rounded">
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Body */}
       <main className="max-w-5xl mx-auto px-5 py-6">
         <div className="flex items-center justify-between mb-4">
           <p className="text-xs text-gray-400">
-            Drag ikon <GripVertical size={11} className="inline -mt-0.5" /> untuk mengubah urutan. Dobel klik nama untuk edit langsung.
+            Drag ikon <GripVertical size={11} className="inline -mt-0.5" /> untuk mengubah urutan. Dobel klik nama untuk edit langsung. Semua perubahan tersimpan otomatis ke database.
           </p>
           <button
             onClick={handleAddRoot}
-            className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-800"
+            className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-800 shrink-0"
           >
             <Plus size={14} /> Tambah Top Level
           </button>
@@ -643,14 +589,13 @@ export default function Page() {
 
         <div className="bg-gray-50/50 border border-gray-200 rounded-xl p-4">
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <SortableContext items={filteredTree.map((n) => n.id)} strategy={verticalListSortingStrategy}>
+            <SortableContext items={tree.map((n) => n.id)} strategy={verticalListSortingStrategy}>
               <div className="space-y-0.5">
-                {filteredTree.map((node) => (
+                {tree.map((node) => (
                   <TreeNode
                     key={node.id}
                     node={node}
                     depth={0}
-                    parentId={null}
                     onAddChild={handleAddChild}
                     onDelete={handleDelete}
                     onRename={handleRename}
@@ -662,9 +607,9 @@ export default function Page() {
             </SortableContext>
           </DndContext>
 
-          {filteredTree.length === 0 && (
+          {tree.length === 0 && (
             <div className="text-center py-10 text-sm text-gray-400">
-              Belum ada data. Klik &quot;Tambah Top Level&quot; untuk mulai.
+              Belum ada data. Klik &quot;Tambah Top Level&quot; untuk mulai, atau import dari file JSON.
             </div>
           )}
         </div>
