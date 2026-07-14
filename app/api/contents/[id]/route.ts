@@ -40,7 +40,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     if (Array.isArray(body.imageUrls)) {
-        update.imageUrls = normalizeImageUrls(body.imageUrls);
+        update.imageUrls = body.imageUrls
+            .filter((item: unknown): item is string => typeof item === "string")
+            .map((item: string) => item.trim())
+            .filter(Boolean);
+    }
+
+    if (typeof body.mediaFolder === "string" && body.mediaFolder.trim()) {
+        update.mediaFolder = slugify(body.mediaFolder);
     }
 
     if (typeof body.contentType === "string") {

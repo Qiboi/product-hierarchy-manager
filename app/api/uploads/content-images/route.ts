@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import path from "path";
 import fs from "fs/promises";
+import path from "path";
 import crypto from "crypto";
+import { slugify } from "@/lib/slugify";
 
 export const runtime = "nodejs";
 
-const UPLOAD_DIR = path.join(process.cwd(), "public", "uploads", "contents");
+const STORAGE_ROOT = path.join(process.cwd(), "storage", "uploads");
 const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
 function mimeToExt(mime: string) {
@@ -23,9 +24,33 @@ function mimeToExt(mime: string) {
     }
 }
 
+async function getNextFilename(dir: string, folderSlug: string, ext: string) {
+    await fs.mkdir(dir, { recursive: true });
+
+    let index = 1;
+    while (true) {
+        const filename = `${folderSlug}-${index}${ext}`;
+        const fullPath = path.join(dir, filename);
+
+        try {
+            await fs.access(fullPath);
+            index += 1;
+        } catch {
+            return { filename, fullPath };
+        }
+    }
+}
+
 export async function POST(req: NextRequest) {
     try {
         const formData = await req.formData();
+
+        const folderRaw = formData.get("folder");
+        const folderSlug =
+            typeof folderRaw === "string" && folderRaw.trim()
+                ? slugify(folderRaw)
+                : "content";
+
         const files = formData
             .getAll("files")
             .filter((item): item is File => item instanceof File);
@@ -34,9 +59,10 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Tidak ada file yang diupload" }, { status: 400 });
         }
 
-        await fs.mkdir(UPLOAD_DIR, { recursive: true });
+        const dir = path.join(STORAGE_ROOT, folderSlug);
+        await fs.mkdir(dir, { recursive: true });
 
-        const urls: string[] = [];
+        const urls: { url: string; filename: string }[] = [];
 
         for (const file of files) {
             if (!ALLOWED_MIME.has(file.type)) {
@@ -47,17 +73,20 @@ export async function POST(req: NextRequest) {
             }
 
             const ext = mimeToExt(file.type) || path.extname(file.name) || ".jpg";
-            const filename = `${Date.now()}-${crypto.randomUUID()}${ext}`;
-            const filepath = path.join(UPLOAD_DIR, filename);
+            const { filename, fullPath } = await getNextFilename(dir, folderSlug, ext);
 
             const bytes = await file.arrayBuffer();
-            await fs.writeFile(filepath, Buffer.from(bytes));
+            await fs.writeFile(fullPath, Buffer.from(bytes));
 
-            urls.push(`/uploads/contents/${filename}`);
+            urls.push({
+                filename,
+                url: `/api/media/uploads/${folderSlug}/${filename}`,
+            });
         }
 
         return NextResponse.json({ urls });
     } catch (error) {
+        console.error("[UPLOAD] error:", error);
         return NextResponse.json(
             { error: error instanceof Error ? error.message : "Upload gagal" },
             { status: 500 }

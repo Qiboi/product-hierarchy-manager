@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
             const created = await ContentModel.create({
                 title: n.title,
                 slug,
+                mediaFolder: slug,
                 description: typeof n.description === "string" ? n.description.trim() || null : null,
                 imageUrls: normalizeImageUrls(n.imageUrls),
                 parentId,

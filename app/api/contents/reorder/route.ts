@@ -65,6 +65,7 @@ export async function POST(req: NextRequest) {
     const content = await ContentModel.create({
         title: title.trim(),
         slug,
+        mediaFolder: slug,
         description: description || null,
         imageUrls,
         parentId: parentId ?? null,

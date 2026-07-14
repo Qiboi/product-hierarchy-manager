@@ -3,6 +3,7 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 export interface IContent extends Document {
     title: string;
     slug: string;
+    mediaFolder: string | null;
     description: string | null;
     imageUrls: string[];
     parentId: string | null;
@@ -16,6 +17,7 @@ const ContentSchema = new Schema<IContent>(
     {
         title: { type: String, required: true, trim: true },
         slug: { type: String, required: true, trim: true },
+        mediaFolder: { type: String, default: null, index: true },
 
         description: { type: String, default: null, trim: true },
         imageUrls: { type: [String], default: [] },

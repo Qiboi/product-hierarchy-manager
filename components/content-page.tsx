@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable react-hooks/set-state-in-effect */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import React, { useState, useCallback, useEffect, useRef } from "react";
@@ -17,6 +17,7 @@ import {
     Check,
     X,
     Layers,
+    Image as ImageIcon,
 } from "lucide-react";
 import {
     DndContext,
@@ -33,7 +34,8 @@ import {
     arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -43,6 +45,7 @@ type FlatContent = {
     _id: string;
     title: string;
     slug: string;
+    mediaFolder: string | null;
     description: string | null;
     imageUrls: string[];
     parentId: string | null;
@@ -56,6 +59,7 @@ type ContentNode = {
     id: string;
     title: string;
     slug: string;
+    mediaFolder: string | null;
     description: string | null;
     imageUrls: string[];
     contentType: string;
@@ -63,14 +67,20 @@ type ContentNode = {
     children: ContentNode[];
 };
 
+type UploadResponse = {
+    urls?: Array<string | { url: string; filename?: string }>;
+};
+
 // ---------- Helpers ----------
 function buildTree(flat: FlatContent[]): ContentNode[] {
     const map = new Map<string, ContentNode>();
+
     flat.forEach((f) =>
         map.set(f._id, {
             id: f._id,
             title: f.title,
             slug: f.slug,
+            mediaFolder: f.mediaFolder,
             description: f.description,
             imageUrls: f.imageUrls ?? [],
             contentType: f.contentType,
@@ -112,11 +122,10 @@ function findParentAndSiblings(
     return null;
 }
 
-// Warna badge tetap untuk 3 tipe default, fallback hash-color untuk tipe custom
 const TYPE_BADGE_STYLES: Record<string, string> = {
-    portfolio_category: "bg-indigo-100 text-indigo-700",
-    portfolio_detail: "bg-sky-100 text-sky-700",
-    // service_detail: "bg-emerald-100 text-emerald-700",
+    service: "bg-indigo-100 text-indigo-700",
+    service_category: "bg-sky-100 text-sky-700",
+    service_detail: "bg-emerald-100 text-emerald-700",
 };
 
 const FALLBACK_BADGE_COLORS = [
@@ -140,9 +149,6 @@ function ContentTreeNode({
     depth,
     onAddChild,
     onDelete,
-    onRename,
-    onSlugChange,
-    onContentTypeChange,
     onOpenEdit,
     expandedIds,
     toggleExpand,
@@ -151,9 +157,6 @@ function ContentTreeNode({
     depth: number;
     onAddChild: (parentId: string) => void;
     onDelete: (id: string, title: string) => void;
-    onRename: (id: string, title: string) => void;
-    onSlugChange: (id: string, slug: string) => void;
-    onContentTypeChange: (id: string, contentType: string) => void;
     onOpenEdit: (node: ContentNode) => void;
     expandedIds: Set<string>;
     toggleExpand: (id: string) => void;
@@ -161,21 +164,6 @@ function ContentTreeNode({
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
         id: node.id,
     });
-
-    // --- editing state: title ---
-    const [editingTitle, setEditingTitle] = useState(false);
-    const [draftTitle, setDraftTitle] = useState(node.title);
-    const titleInputRef = useRef<HTMLInputElement>(null);
-
-    // --- editing state: slug ---
-    const [editingSlug, setEditingSlug] = useState(false);
-    const [draftSlug, setDraftSlug] = useState(node.slug);
-    const slugInputRef = useRef<HTMLInputElement>(null);
-
-    // --- editing state: contentType (badge) ---
-    const [editingType, setEditingType] = useState(false);
-    const [draftType, setDraftType] = useState(node.contentType);
-    const typeInputRef = useRef<HTMLInputElement>(null);
 
     const style = { transform: CSS.Transform.toString(transform), transition };
     const hasChildren = node.children.length > 0;
@@ -189,46 +177,6 @@ function ContentTreeNode({
         "border-l-rose-400",
     ];
     const colorClass = depthColors[depth % depthColors.length];
-
-    useEffect(() => {
-        if (editingTitle) titleInputRef.current?.focus();
-    }, [editingTitle]);
-
-    useEffect(() => {
-        if (editingSlug) slugInputRef.current?.focus();
-    }, [editingSlug]);
-
-    useEffect(() => {
-        if (editingType) typeInputRef.current?.focus();
-    }, [editingType]);
-
-    // sinkron draft kalau data dari server berubah (misal setelah refresh tree)
-    useEffect(() => {
-        setDraftTitle(node.title);
-        setDraftSlug(node.slug);
-        setDraftType(node.contentType);
-    }, [node.title, node.slug, node.contentType]);
-
-    const commitTitle = () => {
-        const trimmed = draftTitle.trim();
-        if (trimmed && trimmed !== node.title) onRename(node.id, trimmed);
-        else setDraftTitle(node.title);
-        setEditingTitle(false);
-    };
-
-    const commitSlug = () => {
-        const trimmed = draftSlug.trim();
-        if (trimmed && trimmed !== node.slug) onSlugChange(node.id, trimmed);
-        else setDraftSlug(node.slug);
-        setEditingSlug(false);
-    };
-
-    const commitType = () => {
-        const trimmed = draftType.trim();
-        if (trimmed && trimmed !== node.contentType) onContentTypeChange(node.id, trimmed);
-        else setDraftType(node.contentType);
-        setEditingType(false);
-    };
 
     return (
         <div ref={setNodeRef} style={style} className={clsx("fade-in", isDragging && "opacity-40")}>
@@ -264,163 +212,76 @@ function ContentTreeNode({
                 </button>
 
                 <div className="flex-1 min-w-0">
-                    {/* Baris 1: Title + Badge contentType */}
                     <div className="flex items-center gap-2 flex-wrap">
-                        {editingTitle ? (
-                            <div className="flex items-center gap-1 flex-1 min-w-[140px]">
-                                <input
-                                    ref={titleInputRef}
-                                    value={draftTitle}
-                                    onChange={(e) => setDraftTitle(e.target.value)}
-                                    onKeyDown={(e) => {
-                                        if (e.key === "Enter") commitTitle();
-                                        if (e.key === "Escape") {
-                                            setDraftTitle(node.title);
-                                            setEditingTitle(false);
-                                        }
-                                    }}
-                                    className="flex-1 text-sm px-2 py-0.5 rounded border border-indigo-300 outline-none focus:ring-2 focus:ring-indigo-200"
-                                />
-                                <button onClick={commitTitle} className="text-emerald-600 hover:bg-emerald-50 rounded p-1">
-                                    <Check size={14} />
-                                </button>
-                                <button
-                                    onClick={() => {
-                                        setDraftTitle(node.title);
-                                        setEditingTitle(false);
-                                    }}
-                                    className="text-gray-400 hover:bg-gray-100 rounded p-1"
-                                >
-                                    <X size={14} />
-                                </button>
-                            </div>
-                        ) : (
-                            <span
-                                onDoubleClick={() => setEditingTitle(true)}
-                                className="text-sm font-medium text-gray-800 truncate select-none"
-                                title="Dobel klik untuk edit judul"
-                            >
-                                {node.title}
-                            </span>
-                        )}
+                        <span
+                            className="text-sm font-medium text-gray-800 truncate select-none"
+                            title={node.title}
+                        >
+                            {node.title}
+                        </span>
 
-                        {/* Badge contentType — editable */}
-                        {editingType ? (
-                            <div className="flex items-center gap-1 shrink-0">
-                                <input
-                                    ref={typeInputRef}
-                                    value={draftType}
-                                    onChange={(e) => setDraftType(e.target.value)}
-                                    onKeyDown={(e) => {
-                                        if (e.key === "Enter") commitType();
-                                        if (e.key === "Escape") {
-                                            setDraftType(node.contentType);
-                                            setEditingType(false);
-                                        }
-                                    }}
-                                    placeholder="contentType"
-                                    className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-indigo-300 outline-none focus:ring-2 focus:ring-indigo-200 w-32"
-                                />
-                                <button onClick={commitType} className="text-emerald-600 hover:bg-emerald-50 rounded p-0.5">
-                                    <Check size={12} />
-                                </button>
-                                <button
-                                    onClick={() => {
-                                        setDraftType(node.contentType);
-                                        setEditingType(false);
-                                    }}
-                                    className="text-gray-400 hover:bg-gray-100 rounded p-0.5"
-                                >
-                                    <X size={12} />
-                                </button>
-                            </div>
-                        ) : (
-                            <span
-                                onDoubleClick={() => setEditingType(true)}
-                                className={clsx(
-                                    "text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0 cursor-pointer",
-                                    typeBadgeClass(node.contentType)
-                                )}
-                                title="Dobel klik untuk edit tipe konten"
-                            >
-                                {node.contentType}
-                            </span>
-                        )}
+                        <span
+                            className={clsx(
+                                "text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0",
+                                typeBadgeClass(node.contentType)
+                            )}
+                            title={node.contentType}
+                        >
+                            {node.contentType}
+                        </span>
 
                         {hasChildren && (
                             <span className="text-[10px] text-gray-400 shrink-0">({node.children.length})</span>
                         )}
                     </div>
 
-                    {/* Baris 2: Slug */}
-                    <div className="mt-0.5">
-                        {editingSlug ? (
-                            <div className="flex items-center gap-1">
-                                <span className="text-[11px] text-gray-400">/</span>
-                                <input
-                                    ref={slugInputRef}
-                                    value={draftSlug}
-                                    onChange={(e) => setDraftSlug(e.target.value)}
-                                    onKeyDown={(e) => {
-                                        if (e.key === "Enter") commitSlug();
-                                        if (e.key === "Escape") {
-                                            setDraftSlug(node.slug);
-                                            setEditingSlug(false);
-                                        }
-                                    }}
-                                    className="text-[11px] px-1.5 py-0.5 rounded border border-indigo-300 outline-none focus:ring-2 focus:ring-indigo-200 font-mono"
-                                />
-                                <button onClick={commitSlug} className="text-emerald-600 hover:bg-emerald-50 rounded p-0.5">
-                                    <Check size={12} />
-                                </button>
-                                <button
-                                    onClick={() => {
-                                        setDraftSlug(node.slug);
-                                        setEditingSlug(false);
-                                    }}
-                                    className="text-gray-400 hover:bg-gray-100 rounded p-0.5"
-                                >
-                                    <X size={12} />
-                                </button>
-                            </div>
-                        ) : (
-                            <span
-                                onDoubleClick={() => setEditingSlug(true)}
-                                className="text-[11px] text-gray-400 font-mono select-none"
-                                title="Dobel klik untuk edit slug"
-                            >
-                                /{node.slug}
+                    <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                        <span className="text-[11px] text-gray-400 font-mono select-none">/{node.slug}</span>
+
+                        {node.mediaFolder && (
+                            <span className="text-[11px] text-gray-500">
+                                folder: <span className="font-mono">{node.mediaFolder}</span>
                             </span>
                         )}
+
+                        {node.description ? (
+                            <span className="text-[11px] text-gray-500 truncate max-w-[320px]">
+                                {node.description}
+                            </span>
+                        ) : null}
+
+                        {node.imageUrls?.length ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] text-gray-500">
+                                <ImageIcon size={12} />
+                                {node.imageUrls.length} gambar
+                            </span>
+                        ) : null}
                     </div>
                 </div>
 
-                {/* Action buttons */}
-                {!editingTitle && !editingSlug && !editingType && (
-                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity mt-1">
-                        <button
-                            onClick={() => onAddChild(node.id)}
-                            className="p-1.5 rounded hover:bg-indigo-50 text-indigo-500"
-                            title="Tambah sub-item"
-                        >
-                            <Plus size={14} />
-                        </button>
-                        <button
-                            onClick={() => onOpenEdit(node)}
-                            className="p-1.5 rounded hover:bg-amber-50 text-amber-500"
-                            title="Edit detail konten"
-                        >
-                            <Pencil size={13} />
-                        </button>
-                        <button
-                            onClick={() => onDelete(node.id, node.title)}
-                            className="p-1.5 rounded hover:bg-rose-50 text-rose-500"
-                            title="Hapus"
-                        >
-                            <Trash2 size={13} />
-                        </button>
-                    </div>
-                )}
+                <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity mt-1">
+                    <button
+                        onClick={() => onAddChild(node.id)}
+                        className="p-1.5 rounded hover:bg-indigo-50 text-indigo-500"
+                        title="Tambah sub-item"
+                    >
+                        <Plus size={14} />
+                    </button>
+                    <button
+                        onClick={() => onOpenEdit(node)}
+                        className="p-1.5 rounded hover:bg-amber-50 text-amber-500"
+                        title="Edit detail konten"
+                    >
+                        <Pencil size={13} />
+                    </button>
+                    <button
+                        onClick={() => onDelete(node.id, node.title)}
+                        className="p-1.5 rounded hover:bg-rose-50 text-rose-500"
+                        title="Hapus"
+                    >
+                        <Trash2 size={13} />
+                    </button>
+                </div>
             </div>
 
             {hasChildren && isExpanded && (
@@ -433,9 +294,6 @@ function ContentTreeNode({
                                 depth={depth + 1}
                                 onAddChild={onAddChild}
                                 onDelete={onDelete}
-                                onRename={onRename}
-                                onSlugChange={onSlugChange}
-                                onContentTypeChange={onContentTypeChange}
                                 onOpenEdit={onOpenEdit}
                                 expandedIds={expandedIds}
                                 toggleExpand={toggleExpand}
@@ -458,10 +316,12 @@ export default function ContentHierarchyPage() {
     const [search, setSearch] = useState("");
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    // edit modal
     const [editOpen, setEditOpen] = useState(false);
     const [editingNode, setEditingNode] = useState<ContentNode | null>(null);
     const [editTitle, setEditTitle] = useState("");
     const [editSlug, setEditSlug] = useState("");
+    const [editMediaFolder, setEditMediaFolder] = useState("");
     const [editContentType, setEditContentType] = useState("");
     const [editDescription, setEditDescription] = useState("");
     const [editImageUrls, setEditImageUrls] = useState<string[]>([]);
@@ -500,82 +360,6 @@ export default function ContentHierarchyPage() {
         }
     }, []);
 
-    const openEditModal = (node: ContentNode) => {
-        setEditingNode(node);
-        setEditTitle(node.title);
-        setEditSlug(node.slug);
-        setEditContentType(node.contentType);
-        setEditDescription(node.description ?? "");
-        setEditImageUrls(node.imageUrls ?? []);
-        setEditError(null);
-        setEditOpen(true);
-    };
-
-    const uploadEditImages = async (files: FileList | File[]) => {
-        const selected = Array.from(files);
-        if (selected.length === 0) return;
-
-        setEditUploading(true);
-        setEditError(null);
-
-        try {
-            const formData = new FormData();
-            selected.forEach((file) => formData.append("files", file));
-
-            const res = await fetch("/api/uploads/content-images", {
-                method: "POST",
-                body: formData,
-            });
-
-            const body = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                throw new Error(body.error || "Gagal upload gambar");
-            }
-
-            const urls: string[] = Array.isArray(body.urls) ? body.urls : [];
-            setEditImageUrls((prev) => Array.from(new Set([...prev, ...urls])));
-        } catch (err) {
-            setEditError(err instanceof Error ? err.message : "Gagal upload gambar");
-        } finally {
-            setEditUploading(false);
-            if (editImageInputRef.current) editImageInputRef.current.value = "";
-        }
-    };
-
-    const removeEditImage = (url: string) => {
-        setEditImageUrls((prev) => prev.filter((item) => item !== url));
-    };
-
-    const saveEditModal = async () => {
-        if (!editingNode) return;
-
-        setEditSaving(true);
-        setEditError(null);
-
-        try {
-            await runAction(() =>
-                fetch(`/api/contents/${editingNode.id}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        title: editTitle,
-                        slug: editSlug,
-                        contentType: editContentType,
-                        description: editDescription,
-                        imageUrls: editImageUrls,
-                    }),
-                })
-            );
-
-            setEditOpen(false);
-            setEditingNode(null);
-        } catch (err) {
-            setEditError(err instanceof Error ? err.message : "Gagal menyimpan perubahan");
-        } finally {
-            setEditSaving(false);
-        }
-    };
-
     useEffect(() => {
         loadTree(false);
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -589,7 +373,6 @@ export default function ContentHierarchyPage() {
         });
     }, []);
 
-    // Helper generik: jalankan fetch, tampilkan error kalau gagal, refresh tree kalau sukses
     const runAction = async (fn: () => Promise<Response>) => {
         setSaving(true);
         try {
@@ -598,7 +381,7 @@ export default function ContentHierarchyPage() {
                 const body = await res.json().catch(() => ({}));
                 throw new Error(body.error || "Aksi gagal dijalankan");
             }
-            await loadTree(true); // keepExpanded = true, supaya tree tidak collapse ulang tiap aksi kecil
+            await loadTree(true);
         } catch (err) {
             setError(err instanceof Error ? err.message : "Terjadi kesalahan");
         } finally {
@@ -636,36 +419,6 @@ export default function ContentHierarchyPage() {
         runAction(() => fetch(`/api/contents/${id}`, { method: "DELETE" }));
     };
 
-    const handleRename = (id: string, title: string) => {
-        runAction(() =>
-            fetch(`/api/contents/${id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ title }),
-            })
-        );
-    };
-
-    const handleSlugChange = (id: string, slug: string) => {
-        runAction(() =>
-            fetch(`/api/contents/${id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ slug }),
-            })
-        );
-    };
-
-    const handleContentTypeChange = (id: string, contentType: string) => {
-        runAction(() =>
-            fetch(`/api/contents/${id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ contentType }),
-            })
-        );
-    };
-
     const handleDragEnd = (event: DragEndEvent) => {
         const { active, over } = event;
         if (!over || active.id === over.id) return;
@@ -673,7 +426,7 @@ export default function ContentHierarchyPage() {
         const activeInfo = findParentAndSiblings(tree, active.id as string);
         const overInfo = findParentAndSiblings(tree, over.id as string);
         if (!activeInfo || !overInfo) return;
-        if (activeInfo.parentId !== overInfo.parentId) return; // hanya reorder antar-sibling
+        if (activeInfo.parentId !== overInfo.parentId) return;
 
         const reordered = arrayMove(activeInfo.siblings, activeInfo.index, overInfo.index);
         const items = reordered.map((n, idx) => ({ id: n.id, order: idx }));
@@ -687,17 +440,18 @@ export default function ContentHierarchyPage() {
         );
     };
 
-    // ---------- Export / Import ----------
     const handleExport = () => {
         const stripForExport = (nodes: ContentNode[]): any[] =>
             nodes.map((n) => ({
                 title: n.title,
                 slug: n.slug,
+                mediaFolder: n.mediaFolder,
                 description: n.description,
                 imageUrls: n.imageUrls,
                 contentType: n.contentType,
                 children: stripForExport(n.children),
             }));
+
         const blob = new Blob([JSON.stringify(stripForExport(tree), null, 2)], {
             type: "application/json",
         });
@@ -717,6 +471,7 @@ export default function ContentHierarchyPage() {
     const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
+
         const reader = new FileReader();
         reader.onload = async () => {
             try {
@@ -729,7 +484,6 @@ export default function ContentHierarchyPage() {
                         body: JSON.stringify({ data: parsed }),
                     })
                 );
-                // setelah import, reset expand ke default (root + level 1)
                 setExpandedIds(expandDefaults(buildTree(await (await fetch("/api/contents")).json())));
             } catch (err) {
                 setError(err instanceof Error ? err.message : "Gagal membaca atau mengimpor file");
@@ -739,22 +493,135 @@ export default function ContentHierarchyPage() {
         e.target.value = "";
     };
 
+    const openEditModal = (node: ContentNode) => {
+        setEditingNode(node);
+        setEditTitle(node.title);
+        setEditSlug(node.slug);
+        setEditMediaFolder(node.mediaFolder ?? node.slug);
+        setEditContentType(node.contentType);
+        setEditDescription(node.description ?? "");
+        setEditImageUrls(node.imageUrls ?? []);
+        setEditError(null);
+        setEditOpen(true);
+    };
+
+    const closeEditModal = () => {
+        setEditOpen(false);
+        setEditingNode(null);
+        setEditError(null);
+        setEditUploading(false);
+        setEditSaving(false);
+    };
+
+    const normalizeUploadUrls = (payload: UploadResponse): string[] => {
+        const raw = payload.urls ?? [];
+        return raw
+            .map((item) => (typeof item === "string" ? item : item?.url))
+            .filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+    };
+
+    const uploadEditImages = async (files: FileList | File[]) => {
+        const selected = Array.from(files);
+        if (selected.length === 0) return;
+
+        setEditUploading(true);
+        setEditError(null);
+
+        try {
+            const folder = (editMediaFolder.trim() || editSlug.trim() || editingNode?.slug || "content").trim();
+
+            const formData = new FormData();
+            formData.append("folder", folder);
+            selected.forEach((file) => formData.append("files", file));
+
+            const res = await fetch("/api/uploads/content-images", {
+                method: "POST",
+                body: formData,
+            });
+
+            const body: UploadResponse & { error?: string } = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(body.error || "Gagal upload gambar");
+            }
+
+            const urls = normalizeUploadUrls(body);
+            setEditImageUrls((prev) => Array.from(new Set([...prev, ...urls])));
+        } catch (err) {
+            setEditError(err instanceof Error ? err.message : "Gagal upload gambar");
+        } finally {
+            setEditUploading(false);
+            if (editImageInputRef.current) editImageInputRef.current.value = "";
+        }
+    };
+
+    const removeEditImage = (url: string) => {
+        setEditImageUrls((prev) => prev.filter((item) => item !== url));
+    };
+
+    const saveEditModal = async () => {
+        if (!editingNode) return;
+
+        setEditSaving(true);
+        setEditError(null);
+
+        try {
+            const payload = {
+                title: editTitle,
+                slug: editSlug,
+                mediaFolder: editMediaFolder.trim() || editSlug.trim() || editingNode.slug,
+                contentType: editContentType,
+                description: editDescription,
+                imageUrls: editImageUrls,
+            };
+
+            const res = await fetch(`/api/contents/${editingNode.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+
+            const raw = await res.text();
+            if (!res.ok) {
+                let message = raw || "Gagal menyimpan perubahan";
+                try {
+                    const parsed = JSON.parse(raw);
+                    message = parsed.error || message;
+                } catch {
+                    // ignore
+                }
+                throw new Error(message);
+            }
+
+            await loadTree(true);
+            closeEditModal();
+        } catch (err) {
+            setEditError(err instanceof Error ? err.message : "Gagal menyimpan perubahan");
+        } finally {
+            setEditSaving(false);
+        }
+    };
+
     const totalNodes = countNodes(tree);
 
     useEffect(() => {
         if (!search.trim()) return;
         const q = search.toLowerCase();
         const ids = new Set<string>();
+
         const walk = (nodes: ContentNode[], ancestors: string[]) => {
             nodes.forEach((n) => {
                 const matched =
                     n.title.toLowerCase().includes(q) ||
                     n.slug.toLowerCase().includes(q) ||
-                    n.contentType.toLowerCase().includes(q);
+                    n.contentType.toLowerCase().includes(q) ||
+                    (n.description ?? "").toLowerCase().includes(q) ||
+                    (n.mediaFolder ?? "").toLowerCase().includes(q);
+
                 if (matched) ancestors.forEach((a) => ids.add(a));
                 walk(n.children, [...ancestors, n.id]);
             });
         };
+
         walk(tree, []);
         setExpandedIds((prev) => new Set([...prev, ...ids]));
     }, [search, tree]);
@@ -793,7 +660,7 @@ export default function ContentHierarchyPage() {
                     <div className="flex items-center gap-2">
                         <input
                             type="text"
-                            placeholder="Cari judul/slug/tipe..."
+                            placeholder="Cari judul/slug/tipe/deskripsi/folder..."
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 w-40 sm:w-56"
@@ -835,8 +702,7 @@ export default function ContentHierarchyPage() {
             <main className="max-w-5xl mx-auto px-5 py-6">
                 <div className="flex items-center justify-between mb-4">
                     <p className="text-xs text-gray-400">
-                        Dobel klik judul, slug, atau badge tipe konten untuk mengedit langsung. Tipe konten otomatis
-                        terisi sesuai level saat dibuat, tapi bebas diubah.
+                        Edit detail konten dibuka lewat modal. Tree tetap ringkas agar lebih nyaman saat data sudah banyak.
                     </p>
                     <button
                         onClick={handleAddRoot}
@@ -857,9 +723,6 @@ export default function ContentHierarchyPage() {
                                         depth={0}
                                         onAddChild={handleAddChild}
                                         onDelete={handleDelete}
-                                        onRename={handleRename}
-                                        onSlugChange={handleSlugChange}
-                                        onContentTypeChange={handleContentTypeChange}
                                         onOpenEdit={openEditModal}
                                         expandedIds={expandedIds}
                                         toggleExpand={toggleExpand}
@@ -876,21 +739,13 @@ export default function ContentHierarchyPage() {
                     )}
                 </div>
             </main>
-            <Dialog
-                open={editOpen}
-                onOpenChange={(open) => {
-                    setEditOpen(open);
-                    if (!open) {
-                        setEditingNode(null);
-                        setEditError(null);
-                    }
-                }}
-            >
-                <DialogContent className="sm:max-w-3xl">
+
+            <Dialog open={editOpen} onOpenChange={(open) => (open ? setEditOpen(true) : closeEditModal())}>
+                <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>Edit Content</DialogTitle>
                         <DialogDescription>
-                            Ubah judul, slug, tipe, deskripsi, dan gambar untuk konten ini.
+                            Ubah judul, slug, folder media, deskripsi, dan gambar untuk konten ini.
                         </DialogDescription>
                     </DialogHeader>
 
@@ -918,6 +773,18 @@ export default function ContentHierarchyPage() {
                                     onChange={(e) => setEditSlug(e.target.value)}
                                     placeholder="slug-konten"
                                 />
+                            </div>
+
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium">Media Folder</label>
+                                <Input
+                                    value={editMediaFolder}
+                                    onChange={(e) => setEditMediaFolder(e.target.value)}
+                                    placeholder="folder media"
+                                />
+                                <p className="text-xs text-gray-400">
+                                    Folder ini dipakai untuk upload gambar. Sebaiknya tetap stabil walau slug berubah.
+                                </p>
                             </div>
 
                             <div className="space-y-2">
@@ -970,19 +837,12 @@ export default function ContentHierarchyPage() {
                             {editImageUrls.length > 0 ? (
                                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                                     {editImageUrls.map((url) => (
-                                        <div
-                                            key={url}
-                                            className="group relative overflow-hidden rounded-lg border bg-white"
-                                        >
-                                            <img
-                                                src={url}
-                                                alt=""
-                                                className="h-28 w-full object-cover"
-                                            />
+                                        <div key={url} className="group relative overflow-hidden rounded-lg border bg-white">
+                                            <img src={url} alt="" className="h-28 w-full object-cover" />
                                             <button
                                                 type="button"
                                                 onClick={() => removeEditImage(url)}
-                                                className="absolute right-2 top-2 rounded-full bg-black/70 p-1 text-white opacity-100 transition group-hover:bg-black"
+                                                className="absolute right-2 top-2 rounded-full bg-black/70 p-1 text-white hover:bg-black"
                                                 title="Hapus gambar"
                                             >
                                                 <X size={14} />
@@ -999,19 +859,10 @@ export default function ContentHierarchyPage() {
                     </div>
 
                     <div className="mt-6 flex items-center justify-end gap-2">
-                        <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => setEditOpen(false)}
-                            disabled={editSaving}
-                        >
+                        <Button type="button" variant="outline" onClick={closeEditModal} disabled={editSaving}>
                             Batal
                         </Button>
-                        <Button
-                            type="button"
-                            onClick={saveEditModal}
-                            disabled={editSaving || editUploading}
-                        >
+                        <Button type="button" onClick={saveEditModal} disabled={editSaving || editUploading}>
                             {editSaving ? "Menyimpan..." : "Simpan"}
                         </Button>
                     </div>
