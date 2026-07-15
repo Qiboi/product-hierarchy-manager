@@ -45,7 +45,6 @@ type FlatContent = {
     _id: string;
     title: string;
     slug: string;
-    mediaFolder: string | null;
     description: string | null;
     imageUrls: string[];
     parentId: string | null;
@@ -59,7 +58,6 @@ type ContentNode = {
     id: string;
     title: string;
     slug: string;
-    mediaFolder: string | null;
     description: string | null;
     imageUrls: string[];
     contentType: string;
@@ -81,7 +79,6 @@ function buildTree(flat: FlatContent[]): ContentNode[] {
             id: f._id,
             title: f.title,
             slug: f.slug,
-            mediaFolder: f.mediaFolder,
             description: f.description,
             imageUrls: f.imageUrls ?? [],
             contentType: f.contentType,
@@ -156,6 +153,27 @@ function findParentAndSiblings(
     if (idx !== -1) return { parentId, index: idx, siblings: nodes };
     for (const n of nodes) {
         const found = findParentAndSiblings(n.children, id, n.id);
+        if (found) return found;
+    }
+    return null;
+}
+
+function collectContentTypes(nodes: ContentNode[]): string[] {
+    const set = new Set<string>();
+    const walk = (list: ContentNode[]) => {
+        list.forEach((n) => {
+            set.add(n.contentType);
+            walk(n.children);
+        });
+    };
+    walk(nodes);
+    return Array.from(set).sort();
+}
+
+function findNodeById(nodes: ContentNode[], id: string): ContentNode | null {
+    for (const n of nodes) {
+        if (n.id === id) return n;
+        const found = findNodeById(n.children, id);
         if (found) return found;
     }
     return null;
@@ -277,11 +295,11 @@ function ContentTreeNode({
                     <div className="mt-0.5 flex flex-wrap items-center gap-2">
                         <span className="text-[11px] text-gray-400 font-mono select-none">/{node.slug}</span>
 
-                        {node.mediaFolder && (
+                        {/* {node.mediaFolder && (
                             <span className="text-[11px] text-gray-500">
                                 folder: <span className="font-mono">{node.mediaFolder}</span>
                             </span>
-                        )}
+                        )} */}
 
                         {node.description ? (
                             <span className="text-[11px] text-gray-500 truncate max-w-[320px]">
@@ -366,6 +384,10 @@ export default function ContentHierarchyPage() {
     const [addSaving, setAddSaving] = useState(false);
     const [addError, setAddError] = useState<string | null>(null);
 
+    const [addContentType, setAddContentType] = useState("");
+    const [addContentTypeCustom, setAddContentTypeCustom] = useState("");
+    const [useCustomContentType, setUseCustomContentType] = useState(false);
+
     // delete modal
     const [deleteOpen, setDeleteOpen] = useState(false);
     const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
@@ -377,7 +399,6 @@ export default function ContentHierarchyPage() {
     const [editingNode, setEditingNode] = useState<ContentNode | null>(null);
     const [editTitle, setEditTitle] = useState("");
     const [editSlug, setEditSlug] = useState("");
-    const [editMediaFolder, setEditMediaFolder] = useState("");
     const [editContentType, setEditContentType] = useState("");
     const [editDescription, setEditDescription] = useState("");
     const [editImageUrls, setEditImageUrls] = useState<string[]>([]);
@@ -389,6 +410,8 @@ export default function ContentHierarchyPage() {
     const visibleRoots = useMemo(() => {
         return getVisibleRoots(tree, rootContentTypeFilter, rootSortMode);
     }, [tree, rootContentTypeFilter, rootSortMode]);
+
+    const contentTypeOptions = useMemo(() => collectContentTypes(tree), [tree]);
 
     const canDragRoot = rootContentTypeFilter === "all" && rootSortMode === "order";
 
@@ -455,6 +478,16 @@ export default function ContentHierarchyPage() {
         setAddParentId(parentId);
         setAddTitle("");
         setAddError(null);
+
+        if (parentId) {
+            const parentNode = findNodeById(tree, parentId);
+            setAddContentType(parentNode?.contentType ?? "");
+        } else {
+            setAddContentType("");
+        }
+
+        setAddContentTypeCustom("");
+        setUseCustomContentType(false);
         setAddOpen(true);
     };
 
@@ -462,6 +495,9 @@ export default function ContentHierarchyPage() {
         setAddOpen(false);
         setAddParentId(null);
         setAddTitle("");
+        setAddContentType("");
+        setAddContentTypeCustom("");
+        setUseCustomContentType(false);
         setAddError(null);
         setAddSaving(false);
     };
@@ -472,6 +508,15 @@ export default function ContentHierarchyPage() {
             return;
         }
 
+        const finalContentType = useCustomContentType
+            ? addContentTypeCustom.trim()
+            : addContentType.trim();
+
+        if (useCustomContentType && !finalContentType) {
+            setAddError("Content type custom tidak boleh kosong");
+            return;
+        }
+
         setAddSaving(true);
         setAddError(null);
 
@@ -479,7 +524,11 @@ export default function ContentHierarchyPage() {
             const res = await fetch("/api/contents", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ title: addTitle.trim(), parentId: addParentId }),
+                body: JSON.stringify({
+                    title: addTitle.trim(),
+                    parentId: addParentId,
+                    ...(finalContentType ? { contentType: finalContentType } : {}),
+                }),
             });
 
             if (!res.ok) {
@@ -563,7 +612,6 @@ export default function ContentHierarchyPage() {
             nodes.map((n) => ({
                 title: n.title,
                 slug: n.slug,
-                mediaFolder: n.mediaFolder,
                 description: n.description,
                 imageUrls: n.imageUrls,
                 contentType: n.contentType,
@@ -615,7 +663,6 @@ export default function ContentHierarchyPage() {
         setEditingNode(node);
         setEditTitle(node.title);
         setEditSlug(node.slug);
-        setEditMediaFolder(node.mediaFolder ?? node.slug);
         setEditContentType(node.contentType);
         setEditDescription(node.description ?? "");
         setEditImageUrls(node.imageUrls ?? []);
@@ -689,7 +736,6 @@ export default function ContentHierarchyPage() {
             const payload = {
                 title: editTitle,
                 slug: editSlug,
-                mediaFolder: editMediaFolder.trim() || editSlug.trim() || editingNode.slug,
                 contentType: editContentType,
                 description: editDescription,
                 imageUrls: editImageUrls,
@@ -735,8 +781,7 @@ export default function ContentHierarchyPage() {
                     n.title.toLowerCase().includes(q) ||
                     n.slug.toLowerCase().includes(q) ||
                     n.contentType.toLowerCase().includes(q) ||
-                    (n.description ?? "").toLowerCase().includes(q) ||
-                    (n.mediaFolder ?? "").toLowerCase().includes(q);
+                    (n.description ?? "").toLowerCase().includes(q);
 
                 if (matched) ancestors.forEach((a) => ids.add(a));
                 walk(n.children, [...ancestors, n.id]);
@@ -936,18 +981,6 @@ export default function ContentHierarchyPage() {
                             </div>
 
                             <div className="space-y-2">
-                                <label className="text-sm font-medium">Media Folder</label>
-                                <Input
-                                    value={editMediaFolder}
-                                    onChange={(e) => setEditMediaFolder(e.target.value)}
-                                    placeholder="folder media"
-                                />
-                                <p className="text-xs text-gray-400">
-                                    Folder ini dipakai untuk upload gambar. Sebaiknya tetap stabil walau slug berubah.
-                                </p>
-                            </div>
-
-                            <div className="space-y-2">
                                 <label className="text-sm font-medium">Content Type</label>
                                 <Input
                                     value={editContentType}
@@ -1059,6 +1092,57 @@ export default function ContentHierarchyPage() {
                                     if (e.key === "Enter") submitAddModal();
                                 }}
                             />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">Content Type</label>
+
+                            {!useCustomContentType ? (
+                                <select
+                                    value={addContentType}
+                                    onChange={(e) => {
+                                        if (e.target.value === "__custom__") {
+                                            setUseCustomContentType(true);
+                                            setAddContentTypeCustom("");
+                                        } else {
+                                            setAddContentType(e.target.value);
+                                        }
+                                    }}
+                                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+                                >
+                                    <option value="">
+                                        {addParentId ? "Otomatis (ikuti kedalaman)" : "Otomatis (top level default)"}
+                                    </option>
+                                    {contentTypeOptions.map((type) => (
+                                        <option key={type} value={type}>
+                                            {type}
+                                        </option>
+                                    ))}
+                                    <option value="__custom__">+ Custom...</option>
+                                </select>
+                            ) : (
+                                <div className="flex items-center gap-2">
+                                    <Input
+                                        value={addContentTypeCustom}
+                                        onChange={(e) => setAddContentTypeCustom(e.target.value)}
+                                        placeholder="mis. testimonial, faq, dst"
+                                        autoFocus
+                                    />
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        onClick={() => {
+                                            setUseCustomContentType(false);
+                                            setAddContentTypeCustom("");
+                                        }}
+                                    >
+                                        Batal
+                                    </Button>
+                                </div>
+                            )}
+
+                            <p className="text-xs text-gray-400">
+                                Kosongkan / pilih otomatis untuk memakai default berdasarkan kedalaman level.
+                            </p>
                         </div>
                     </div>
 
