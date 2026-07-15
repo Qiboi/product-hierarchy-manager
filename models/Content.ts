@@ -31,8 +31,11 @@ const ContentSchema = new Schema<IContent>(
     { timestamps: true }
 );
 
-// Unik hanya jika contentType + parentId + slug sama
-ContentSchema.index({ contentType: 1, parentId: 1, slug: 1 }, { unique: true });
+// Slug tidak boleh duplikat di parent yang sama...
+ContentSchema.index({ parentId: 1, slug: 1 }, { unique: true });
+// ...ATAU di contentType yang sama.
+ContentSchema.index({ contentType: 1, slug: 1 }, { unique: true });
+
 ContentSchema.index({ parentId: 1, order: 1 });
 
 export const ContentModel: Model<IContent> =

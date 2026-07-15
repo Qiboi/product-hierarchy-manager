@@ -359,6 +359,19 @@ export default function ContentHierarchyPage() {
 
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    // add modal
+    const [addOpen, setAddOpen] = useState(false);
+    const [addParentId, setAddParentId] = useState<string | null>(null);
+    const [addTitle, setAddTitle] = useState("");
+    const [addSaving, setAddSaving] = useState(false);
+    const [addError, setAddError] = useState<string | null>(null);
+
+    // delete modal
+    const [deleteOpen, setDeleteOpen] = useState(false);
+    const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
+    const [deleteSaving, setDeleteSaving] = useState(false);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
+
     // edit modal
     const [editOpen, setEditOpen] = useState(false);
     const [editingNode, setEditingNode] = useState<ContentNode | null>(null);
@@ -438,34 +451,88 @@ export default function ContentHierarchyPage() {
         }
     };
 
-    const handleAddRoot = () => {
-        const title = prompt("Judul top level baru (mis. Service):");
-        if (!title?.trim()) return;
-        runAction(() =>
-            fetch("/api/contents", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ title: title.trim(), parentId: null }),
-            })
-        );
+    const openAddModal = (parentId: string | null) => {
+        setAddParentId(parentId);
+        setAddTitle("");
+        setAddError(null);
+        setAddOpen(true);
     };
 
-    const handleAddChild = (parentId: string) => {
-        const title = prompt("Judul sub-item baru:");
-        if (!title?.trim()) return;
-        setExpandedIds((prev) => new Set(prev).add(parentId));
-        runAction(() =>
-            fetch("/api/contents", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ title: title.trim(), parentId }),
-            })
-        );
+    const closeAddModal = () => {
+        setAddOpen(false);
+        setAddParentId(null);
+        setAddTitle("");
+        setAddError(null);
+        setAddSaving(false);
     };
 
-    const handleDelete = (id: string, title: string) => {
-        if (!confirm(`Hapus "${title}" beserta seluruh sub-item di dalamnya?`)) return;
-        runAction(() => fetch(`/api/contents/${id}`, { method: "DELETE" }));
+    const submitAddModal = async () => {
+        if (!addTitle.trim()) {
+            setAddError("Judul wajib diisi");
+            return;
+        }
+
+        setAddSaving(true);
+        setAddError(null);
+
+        try {
+            const res = await fetch("/api/contents", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ title: addTitle.trim(), parentId: addParentId }),
+            });
+
+            if (!res.ok) {
+                const errBody = await res.json().catch(() => ({}));
+                throw new Error(errBody.error || "Gagal menambah konten");
+            }
+
+            if (addParentId) {
+                setExpandedIds((prev) => new Set(prev).add(addParentId));
+            }
+
+            await loadTree(true);
+            closeAddModal();
+        } catch (err) {
+            setAddError(err instanceof Error ? err.message : "Terjadi kesalahan");
+        } finally {
+            setAddSaving(false);
+        }
+    };
+
+    const openDeleteModal = (id: string, title: string) => {
+        setDeleteTarget({ id, title });
+        setDeleteError(null);
+        setDeleteOpen(true);
+    };
+
+    const closeDeleteModal = () => {
+        setDeleteOpen(false);
+        setDeleteTarget(null);
+        setDeleteError(null);
+        setDeleteSaving(false);
+    };
+
+    const confirmDelete = async () => {
+        if (!deleteTarget) return;
+
+        setDeleteSaving(true);
+        setDeleteError(null);
+
+        try {
+            const res = await fetch(`/api/contents/${deleteTarget.id}`, { method: "DELETE" });
+            if (!res.ok) {
+                const errBody = await res.json().catch(() => ({}));
+                throw new Error(errBody.error || "Gagal menghapus konten");
+            }
+
+            await loadTree(true);
+            closeDeleteModal();
+        } catch (err) {
+            setDeleteError(err instanceof Error ? err.message : "Terjadi kesalahan");
+        } finally {
+            setDeleteSaving(false);
+        }
     };
 
     const handleDragEnd = (event: DragEndEvent) => {
@@ -579,7 +646,9 @@ export default function ContentHierarchyPage() {
         setEditError(null);
 
         try {
-            const folder = (editMediaFolder.trim() || editSlug.trim() || editingNode?.slug || "content").trim();
+            const contentTypeSegment = editContentType.trim() || "content";
+            const slugSegment = editSlug.trim() || editingNode?.slug || "content";
+            const folder = `${contentTypeSegment}/${slugSegment}`;
 
             const formData = new FormData();
             formData.append("folder", folder);
@@ -604,6 +673,7 @@ export default function ContentHierarchyPage() {
             if (editImageInputRef.current) editImageInputRef.current.value = "";
         }
     };
+
 
     const removeEditImage = (url: string) => {
         setEditImageUrls((prev) => prev.filter((item) => item !== url));
@@ -756,7 +826,7 @@ export default function ContentHierarchyPage() {
                         Edit detail konten dibuka lewat modal. Tree tetap ringkas agar lebih nyaman saat data sudah banyak.
                     </p>
                     <button
-                        onClick={handleAddRoot}
+                        onClick={() => openAddModal(null)}
                         className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-800 shrink-0"
                     >
                         <Plus size={14} /> Tambah Top Level
@@ -811,8 +881,8 @@ export default function ContentHierarchyPage() {
                                         key={node.id}
                                         node={node}
                                         depth={0}
-                                        onAddChild={handleAddChild}
-                                        onDelete={handleDelete}
+                                        onAddChild={(parentId) => openAddModal(parentId)}
+                                        onDelete={openDeleteModal}
                                         onOpenEdit={openEditModal}
                                         expandedIds={expandedIds}
                                         toggleExpand={toggleExpand}
@@ -954,6 +1024,78 @@ export default function ContentHierarchyPage() {
                         </Button>
                         <Button type="button" onClick={saveEditModal} disabled={editSaving || editUploading}>
                             {editSaving ? "Menyimpan..." : "Simpan"}
+                        </Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* Add Content Modal */}
+            <Dialog open={addOpen} onOpenChange={(open) => (open ? setAddOpen(true) : closeAddModal())}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>{addParentId ? "Tambah Sub-item" : "Tambah Top Level"}</DialogTitle>
+                        <DialogDescription>
+                            {addParentId
+                                ? "Buat item baru di bawah konten yang dipilih."
+                                : "Buat kategori/konten baru di level teratas."}
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-3">
+                        {addError && (
+                            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                                {addError}
+                            </div>
+                        )}
+
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">Judul</label>
+                            <Input
+                                value={addTitle}
+                                onChange={(e) => setAddTitle(e.target.value)}
+                                placeholder="Judul konten baru"
+                                autoFocus
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter") submitAddModal();
+                                }}
+                            />
+                        </div>
+                    </div>
+
+                    <div className="mt-6 flex items-center justify-end gap-2">
+                        <Button type="button" variant="outline" onClick={closeAddModal} disabled={addSaving}>
+                            Batal
+                        </Button>
+                        <Button type="button" onClick={submitAddModal} disabled={addSaving}>
+                            {addSaving ? "Menambah..." : "Tambah"}
+                        </Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* Delete Confirmation Modal */}
+            <Dialog open={deleteOpen} onOpenChange={(open) => (open ? setDeleteOpen(true) : closeDeleteModal())}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Hapus Konten</DialogTitle>
+                        <DialogDescription>
+                            Anda akan menghapus <strong>&quot;{deleteTarget?.title}&quot;</strong> beserta seluruh
+                            sub-item di dalamnya. Tindakan ini tidak dapat dibatalkan.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    {deleteError && (
+                        <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                            {deleteError}
+                        </div>
+                    )}
+
+                    <div className="mt-6 flex items-center justify-end gap-2">
+                        <Button type="button" variant="outline" onClick={closeDeleteModal} disabled={deleteSaving}>
+                            Batal
+                        </Button>
+                        <Button type="button" variant="destructive" onClick={confirmDelete} disabled={deleteSaving}>
+                            {deleteSaving ? "Menghapus..." : "Hapus"}
                         </Button>
                     </div>
                 </DialogContent>

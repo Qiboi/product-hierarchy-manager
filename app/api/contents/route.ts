@@ -4,6 +4,14 @@ import { ContentModel } from "@/models/Content";
 import { slugify } from "@/lib/slugify";
 import { typeForDepth } from "@/lib/contentType";
 
+function normalizeImageUrls(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean);
+}
+
 export async function GET() {
     await connectDB();
     const contents = await ContentModel.find().sort({ order: 1 }).lean();
@@ -34,24 +42,44 @@ export async function POST(req: NextRequest) {
         parentSlug = parent.slug;
     }
 
-    const existing = await ContentModel.findOne({ parentId: parentId ?? null, slug });
-    if (existing) {
+    const contentType =
+        typeof body.contentType === "string" && body.contentType.trim()
+            ? body.contentType.trim()
+            : typeForDepth(depth);
+
+    // Cek dua kondisi: sama parent ATAU sama contentType
+    const [parentClash, typeClash] = await Promise.all([
+        ContentModel.findOne({ parentId: parentId ?? null, slug }),
+        ContentModel.findOne({ contentType, slug }),
+    ]);
+
+    if (parentClash) {
         return NextResponse.json(
-            { error: `Slug "${slug}" sudah dipakai di level yang sama` },
+            { error: `Slug "${slug}" sudah dipakai di parent yang sama` },
+            { status: 409 }
+        );
+    }
+
+    if (typeClash) {
+        return NextResponse.json(
+            { error: `Slug "${slug}" sudah dipakai di content type "${contentType}"` },
             { status: 409 }
         );
     }
 
     const siblingCount = await ContentModel.countDocuments({ parentId: parentId ?? null });
 
-    const contentType =
-        typeof body.contentType === "string" && body.contentType.trim()
-            ? body.contentType.trim()
-            : typeForDepth(depth);
+    const description =
+        typeof body.description === "string" ? body.description.trim() : null;
+
+    const imageUrls = normalizeImageUrls(body.imageUrls);
 
     const content = await ContentModel.create({
         title: title.trim(),
         slug,
+        mediaFolder: slug,
+        description: description || null,
+        imageUrls,
         parentId: parentId ?? null,
         parentSlug,
         contentType,

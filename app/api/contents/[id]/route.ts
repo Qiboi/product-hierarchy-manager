@@ -3,14 +3,6 @@ import { connectDB } from "@/lib/mongodb";
 import { ContentModel } from "@/models/Content";
 import { slugify } from "@/lib/slugify";
 
-function normalizeImageUrls(value: unknown): string[] {
-    if (!Array.isArray(value)) return [];
-    return value
-        .filter((item): item is string => typeof item === "string")
-        .map((item) => item.trim())
-        .filter(Boolean);
-}
-
 async function getAllDescendantIds(id: string): Promise<string[]> {
     const children = await ContentModel.find({ parentId: id }).select("_id").lean();
     let ids: string[] = children.map((c) => String(c._id));
@@ -50,29 +42,51 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         update.mediaFolder = slugify(body.mediaFolder);
     }
 
-    if (typeof body.contentType === "string") {
-        const trimmed = body.contentType.trim();
-        if (!trimmed) {
-            return NextResponse.json({ error: "Tipe konten tidak boleh kosong" }, { status: 400 });
-        }
-        update.contentType = trimmed;
+    // Tentukan slug & contentType final (baru kalau diubah, kalau tidak pakai yang lama)
+    const finalSlug = typeof body.slug === "string" ? slugify(body.slug) : current.slug;
+    const finalContentType =
+        typeof body.contentType === "string" && body.contentType.trim()
+            ? body.contentType.trim()
+            : current.contentType;
+
+    if (typeof body.contentType === "string" && !body.contentType.trim()) {
+        return NextResponse.json({ error: "Tipe konten tidak boleh kosong" }, { status: 400 });
     }
 
-    if (typeof body.slug === "string") {
-        const newSlug = slugify(body.slug);
-        const clash = await ContentModel.findOne({
-            _id: { $ne: current._id },
-            parentId: current.parentId,
-            slug: newSlug,
-        });
-        if (clash) {
+    const slugChanged = finalSlug !== current.slug;
+    const typeChanged = finalContentType !== current.contentType;
+
+    if (slugChanged || typeChanged) {
+        const [parentClash, typeClash] = await Promise.all([
+            ContentModel.findOne({
+                _id: { $ne: current._id },
+                parentId: current.parentId,
+                slug: finalSlug,
+            }),
+            ContentModel.findOne({
+                _id: { $ne: current._id },
+                contentType: finalContentType,
+                slug: finalSlug,
+            }),
+        ]);
+
+        if (parentClash) {
             return NextResponse.json(
-                { error: `Slug "${newSlug}" sudah dipakai di level yang sama` },
+                { error: `Slug "${finalSlug}" sudah dipakai di parent yang sama` },
                 { status: 409 }
             );
         }
-        update.slug = newSlug;
+
+        if (typeClash) {
+            return NextResponse.json(
+                { error: `Slug "${finalSlug}" sudah dipakai di content type "${finalContentType}"` },
+                { status: 409 }
+            );
+        }
     }
+
+    if (slugChanged) update.slug = finalSlug;
+    if (typeChanged) update.contentType = finalContentType;
 
     if (typeof body.order === "number") update.order = body.order;
 
