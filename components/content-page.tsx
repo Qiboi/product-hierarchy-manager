@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import clsx from "clsx";
 import {
     Plus,
@@ -64,6 +64,7 @@ type ContentNode = {
     imageUrls: string[];
     contentType: string;
     depth: number;
+    order: number;
     children: ContentNode[];
 };
 
@@ -85,6 +86,7 @@ function buildTree(flat: FlatContent[]): ContentNode[] {
             imageUrls: f.imageUrls ?? [],
             contentType: f.contentType,
             depth: f.depth,
+            order: f.order,
             children: [],
         })
     );
@@ -100,6 +102,43 @@ function buildTree(flat: FlatContent[]): ContentNode[] {
             roots.push(node);
         }
     });
+
+    return sortTreeByOrder(roots);
+}
+
+type RootContentTypeFilter = "all" | "service" | "portfolio_category";
+type RootSortMode = "order" | "title-asc" | "title-desc";
+
+function sortTreeByOrder(nodes: ContentNode[]): ContentNode[] {
+    return [...nodes]
+        .sort((a, b) => a.order - b.order)
+        .map((node) => ({
+            ...node,
+            children: sortTreeByOrder(node.children),
+        }));
+}
+
+function getVisibleRoots(
+    tree: ContentNode[],
+    filter: RootContentTypeFilter,
+    sortMode: RootSortMode
+) {
+    let roots = tree.filter((node) => {
+        if (filter === "all") return true;
+        return node.contentType === filter;
+    });
+
+    if (sortMode === "order") {
+        roots = [...roots].sort((a, b) => a.order - b.order);
+    }
+
+    if (sortMode === "title-asc") {
+        roots = [...roots].sort((a, b) => a.title.localeCompare(b.title, "id", { sensitivity: "base" }));
+    }
+
+    if (sortMode === "title-desc") {
+        roots = [...roots].sort((a, b) => b.title.localeCompare(a.title, "id", { sensitivity: "base" }));
+    }
 
     return roots;
 }
@@ -314,6 +353,10 @@ export default function ContentHierarchyPage() {
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [search, setSearch] = useState("");
+
+    const [rootContentTypeFilter, setRootContentTypeFilter] = useState<RootContentTypeFilter>("all");
+    const [rootSortMode, setRootSortMode] = useState<RootSortMode>("order");
+
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // edit modal
@@ -329,6 +372,12 @@ export default function ContentHierarchyPage() {
     const [editSaving, setEditSaving] = useState(false);
     const [editError, setEditError] = useState<string | null>(null);
     const editImageInputRef = useRef<HTMLInputElement>(null);
+
+    const visibleRoots = useMemo(() => {
+        return getVisibleRoots(tree, rootContentTypeFilter, rootSortMode);
+    }, [tree, rootContentTypeFilter, rootSortMode]);
+
+    const canDragRoot = rootContentTypeFilter === "all" && rootSortMode === "order";
 
     const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
@@ -420,6 +469,8 @@ export default function ContentHierarchyPage() {
     };
 
     const handleDragEnd = (event: DragEndEvent) => {
+        if (!canDragRoot) return;
+
         const { active, over } = event;
         if (!over || active.id === over.id) return;
 
@@ -712,11 +763,50 @@ export default function ContentHierarchyPage() {
                     </button>
                 </div>
 
+                <div className="mb-4 grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="space-y-1.5">
+                            <label className="text-xs font-medium text-gray-500">Filter Root Content Type</label>
+                            <select
+                                value={rootContentTypeFilter}
+                                onChange={(e) => setRootContentTypeFilter(e.target.value as RootContentTypeFilter)}
+                                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+                            >
+                                <option value="all">All</option>
+                                <option value="service">Service</option>
+                                <option value="portfolio_category">Portfolio Category</option>
+                            </select>
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <label className="text-xs font-medium text-gray-500">Sort Root</label>
+                            <select
+                                value={rootSortMode}
+                                onChange={(e) => setRootSortMode(e.target.value as RootSortMode)}
+                                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+                            >
+                                <option value="order">Order</option>
+                                <option value="title-asc">Title A-Z</option>
+                                <option value="title-desc">Title Z-A</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="text-xs text-gray-400 lg:text-right">
+                        Menampilkan {visibleRoots.length} root dari {tree.length} root.
+                        {!canDragRoot && (
+                            <div className="mt-1 text-amber-600">
+                                Drag reorder aktif hanya saat filter = All dan sort = Order.
+                            </div>
+                        )}
+                    </div>
+                </div>
+
                 <div className="bg-gray-50/50 border border-gray-200 rounded-xl p-4">
                     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                        <SortableContext items={tree.map((n) => n.id)} strategy={verticalListSortingStrategy}>
+                        <SortableContext items={visibleRoots.map((n) => n.id)} strategy={verticalListSortingStrategy}>
                             <div className="space-y-0.5">
-                                {tree.map((node) => (
+                                {visibleRoots.map((node) => (
                                     <ContentTreeNode
                                         key={node.id}
                                         node={node}
