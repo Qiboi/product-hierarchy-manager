@@ -82,7 +82,8 @@ export async function POST(req: NextRequest) {
                 );
             }
 
-            const originalBuffer = Buffer.from(await file.arrayBuffer());
+            const arrayBuffer = await file.arrayBuffer();
+            const originalBuffer = Buffer.from(new Uint8Array(arrayBuffer));
 
             let processed;
             try {
