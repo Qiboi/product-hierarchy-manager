@@ -12,7 +12,7 @@ const ALLOWED_MIME = new Set([
     "image/gif",
 ]);
 
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB — batas akhir setelah kompresi
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 5MB — batas akhir setelah kompresi
 const MAX_DIMENSION = 2000; // lebar/tinggi maksimal dalam px
 
 function buildFolderPath(folderRaw: FormDataEntryValue | null): string {
